@@ -1,3 +1,8 @@
+####################################
+#####  Shiny APP for Clients   #####
+#####    Date: 2023-12-10      #####
+#####     Author: Li Liu       #####
+####################################
 library(shiny)
 library(shinythemes)
 library(shinyauthr)
