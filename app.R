@@ -1,118 +1,231 @@
-###############################################
-######  UI for clients(PI and students)  ######
-######         Author: Li Liu            ######
-######         Date: 12-06-2023          ######
-###############################################
-library(RSQLite)
-library(DBI)
-library(tidyverse)
-library(dbplyr)
-library(dplyr)
+library(RMySQL)
 library(shiny)
-library(shinyWidgets)
+library(DBI)
+library(shiny)
+library(shinyauthr)
+library(DT)
+library(shinydashboard)
 
-con = dbConnect(RMySQL::MySQL(),
-                            dbname='BCL',
-                            host='localhost',
-                            port=3306,
-                            user='Li',
-                            password='***')
-dbListTables(con)
+#mysql connection
+mysqlconnection <- dbConnect(RMySQL::MySQL(),
+                             dbname = 'BCL',
+                             host = 'localhost',
+                             port = 3306,
+                             user = 'root',
+                             password = '951611028D@ryaSH')
 
-# It is a good practice to close connection to a database when you no longer need to read/write data from/to it.
-# dbDisconnect(con)
+user_base <- tibble::tibble(
+  user = c("Darya", "Jasmine","Li"),
+  password = sapply(c("123", "123","123"), sodium::password_store),
+  permissions = c("admin", "standard","standard2"),
+  name = c("User One", "User Two","User Three")
+)
 
-# Insert a new row into the table
-# dbExecute(con, "INSERT into client (v_number, project_id, role, name, school, department, title, sex, email) 
-#                 VALUES (10003, 1236, 'Student', 'Bob James', 'Medicibe','Family Medicine', '2nd-year MD student','M','bob12@vcu.edu')")
-
-
-### Retrieve the tables that will be needed 
-table_client <- dbGetQuery(con, "select * from client")                     #          delete, add
-table_work_on_project  <- dbGetQuery(con, "select p.project_id, p.title, p.date_received, p.deadline, p.p_type, sf.name, sf.email 
-                                           from project as p, student_faculty as sf, work_on as wo
-                                           where p.project_id = wo.project_id and wo.v_number = sf.v_number") # observe
-table_project_progress <- dbGetQuery(con, "select * from project_progress") # observe
-table_grants <- dbGetQuery(con, "select * from grants")                     # observe, delete, add
-table_output <- dbGetQuery(con, "select * from output")                     # observe, delete, add
-### Retrieve the lists that will be needed
-vector_project_number  <- dbGetQuery(con,"select project_id from client")
-vector_client_v_number <- dbGetQuery(con,"select v_number from client")
-vector_grant_number <- dbGetQuery(con, "select number from grants")
-
-###########################################################################
-# user interface (ui) object controls the layout and appearance of your app
-###########################################################################
 ui <- fluidPage(
-  titlePanel("Biostatistical Consulting Laboratory"),
-  
-  sidebarLayout(
-   
-     sidebarPanel(
-      textInput("input_project_number",
-                  label = h4("Input your project number")),
-      checkboxGroupInput("input_client_role",
-                         label = h4("Select the role in your team"),
-                         choices = c("PI","Student", "Other"), selected = "PI"),
-      checkboxGroupInput("input_progress",
-                         label = h4("Select the progress type"),
-                         choices = c("SOW finished","SAP finished", "Analysis report finished"), selected = "SOW finished"),
-      dateInput("input_date",
-                label = h4("See the progress updates of your project after this date"),
-                value = "2021-01-01"),
-      p("Want to learn more about BCL? Visit the ",a("BCL homepage.", href = "https://biostatistics.vcu.edu/research/bcl/"))
-      ),
+  theme = bslib::bs_theme(bootswatch = "sandstone"),
+  mainPanel(
+    img(src = "a1.jpg", height = 120, width = 200),
+    div(),
+    h1("BCL"),
+    h2("Biostatistical Consulting Lab")
     
-    mainPanel(
-      textOutput("output_text"),
-      h4("See the basic information of your project"),
-      tableOutput("output_selected_project"),
-      br(),
-      h4("See your team members"),
-      tableOutput("output_selected_client"),
-      br(),
-      h4("Check the progress of your project"),
-      tableOutput("output_selected_progress"),
-      br(),
-      h4("Check the grant status"),
-      tableOutput("output_selected_grant"),
-      br(),
-      h4("Check the output of your project"),
-      dataTableOutput("output_selected_output")
-      )
-    
-    )
+  ),
+  shinyauthr::loginUI(id = "login"),
+  uiOutput("content")
 )
   
+#login section
+server <- function(input, output, session) {
+  
+  credentials <- shinyauthr::loginServer(
+    id = "login",
+    data = user_base,
+    user_col = user,
+    pwd_col = password,
+    sodium_hashed = TRUE,
+  )
 
-######################################################################################
-# server function contains the instructions that your computer needs to build your app
-######################################################################################
-server <- function(input, output) {
-  output$output_text <- renderText({paste("You are checking information of project: ", input$input_project_number)})
-  output$output_selected_project   <- renderTable({table_work_on_project[table_work_on_project$project_id == input$input_project_number,]})
-  output$output_selected_client    <- renderTable({table_client[table_client$project_id == input$input_project_number & table_client$role %in% input$input_client_role,]})
-  output$output_selected_progress  <- renderTable({table_project_progress[table_project_progress$project_id == input$input_project_number 
-                                                                            & table_project_progress$status %in% input$input_progress 
-                                                                            & table_project_progress$date > input$input_date,]})
-  output$output_selected_grant     <- renderTable({table_grants[table_grants$project_id == input$input_project_number,]})
-  output$output_selected_output    <- renderDataTable({table_output[table_output$project_id == input$input_project_number,]})
+
+# Reactive expression to check if user is authenticated
+  user_auth <- reactive({
+    credentials()$info
+  })
+# Content to show after login
+  output$content <- renderUI({
+    req(user_auth())
+    ## Design input ----
+    navbarPage(
+      "", 
+      
+      navbarMenu("Observe Data", 
+                 tabPanel("All Projects",
+                          DT::dataTableOutput("tableObs_prj")),
+                 tabPanel("Client Information",
+                          DT::dataTableOutput("tableObs_pi")),
+                 tabPanel("Students and Faculties Information",
+                          DT::dataTableOutput("tableObs_stu"))
+                 ),
+      navbarMenu("Edit table", 
+                 tabPanel("Insert New Project", sidebarLayout(
+                   sidebarPanel(
+                     textInput("prj_id", "Enter New Project ID: "),
+                     textInput("prj_title", "Enter Project Title: "),
+                     dateInput("date_received", label = "Enter Updated Date Received (yyyy-mm-dd): ",
+                               value = "2021-01-01"),
+                     dateInput("deadline", label = "Enter Updated Deadline Received (yyyy-mm-dd): ",
+                               value = "2021-01-01"),
+                     selectInput("type", "Select Project Type: ", choices = c("Consulting", "Project")),
+                     actionButton("insertPrj", "Insert into Table"),
+                   ),
+                   mainPanel(
+                     textOutput("status2a"),
+                     tableOutput("tableOutput_Nprj")
+                   )
+                 )
+                ),
+                 tabPanel("Delete a Project", 
+                          sidebarLayout(
+                            sidebarPanel(
+                              numericInput("prj_id.rm", "Input Project ID to Remove: ",
+                                          value = dbGetQuery(mysqlconnection, "SELECT project_id FROM project;")),
+                              actionButton("rmPrjAssign", "Remove Project"),
+                            ),
+                            mainPanel(
+                              textOutput("status2e.rm"),
+                              tableOutput("tableOutput_Rmprj")
+                            )
+                          )
+                        ),
+                 tabPanel("Update a project",
+                          sidebarLayout(
+                            sidebarPanel(
+                              selectInput("prj_id_assign.up", "Select Project ID to Update: ",
+                                          choices = dbGetQuery(mysqlconnection, "SELECT project_id FROM project;")),
+                              selectInput("v_number_assign.up", "Select Updated Assigned Student V Number: ",
+                                          choices = dbGetQuery(mysqlconnection, "SELECT V_number FROM student_faculty WHERE title = 'Student';")),
+                              selectInput("super1_id.up", "Select Updated Supervisor 1 ID: ",
+                                          choices = dbGetQuery(mysqlconnection, "SELECT V_number FROM student_faculty WHERE title = 'Student' or 'Staff';")),
+                              selectInput("super2_id.up", "Select Updated Supervisor 2 ID: ",
+                                          choices = dbGetQuery(mysqlconnection, "SELECT V_number FROM student_faculty WHERE title IN ('Assistant Professor', 'Associate Professor', 'Professor');")),
+                              actionButton("updatePrjAssign", "Update Table"),
+                            ),
+                            mainPanel(
+                              textOutput("status2d.up"),
+                              tableOutput("tableOutput_UpAprj")
+                            )
+                          )
+                  )
+      )
+    )
+  })
+  
+    # Output of Observed table of Student and Faculty
+  output$tableObs_stu <- DT::renderDataTable({
+    table <- dbGetQuery(mysqlconnection, "SELECT * FROM student_faculty;")
+    names(table) <- c('V number', 'Name', 'Sex', 'Email', 'Highest Degree', 'Title')
+    DT::datatable(table)
+  })
+  
+  # Output of Observed table of Client
+  output$tableObs_pi <- DT::renderDataTable({
+    table <- dbGetQuery(mysqlconnection, " SELECT * FROM client;")
+    names(table) <- c('V Number', 'Project ID', 'Role', 'Name', 'School' , 'Department', 'Title', 'Sex', 'Email')
+    DT::datatable(table)
+  })
+  
+  # Output of Observed table of Project
+  output$tableObs_prj <- DT::renderDataTable({
+    table <- dbGetQuery(mysqlconnection, "
+  SELECT project.project_id, title, date_received, deadline, p_type, v_number, supervisor1_id, supervisor2_id, number, grant_status, IRB_status 
+  FROM project
+  LEFT JOIN work_on ON project.project_id = work_on.project_id
+  LEFT JOIN grants ON project.project_id = grants.project_id;
+")
+    names(table) <- c('ID', 'Title', 'Received', 'Deadline', 'Type', 'Working Student', 'Supervisor1', 'Supervisor2', 'Grant number', 'Grant Status', 'IRB Status')
+    DT::datatable(table)
+  })
+  
+  # Output of Table of New Project
+  observeEvent(input$insertPrj, {
+    # Get input values
+    prj_id <- input$prj_id
+    prj_title <- input$prj_title
+    date_received <- input$date_received
+    deadline <- input$deadline
+    p_type <- input$type
+    
+    
+    # Insert into SQL table
+    query <- paste0("INSERT INTO project (project_id, title, date_received, deadline, p_type) VALUES ('",
+                    prj_id, "', '", prj_title, "', '", date_received, "', '", deadline, "', '", p_type, "')")
+    dbExecute(mysqlconnection, query)
+    
+    # Display status
+    output$status2a <- renderText("Data inserted into Project Table.")
+    # Display updated table
+    output$tableOutput_Nprj <- renderTable({
+      # Retrieve and display data
+      query_select <- "SELECT * FROM project"
+      dbGetQuery(mysqlconnection, query_select)
+    })
+  })
+  
+  # Update of Table of New Project
+  observeEvent(input$updatePrj, {
+    # Get input values
+    prj_id <- input$prj_id.up
+    prj_title <- input$prj_title.up
+    date_received <- input$date_received.up
+    deadline <- input$deadline.up
+    p_type <- input$type.up
+    
+    
+    # Insert into SQL table
+    query <- paste0("UPDATE project SET title = '", prj_title, "', date_received = '", date_received, "', deadline = '", deadline, "', p_type = '", p_type,
+                    "' WHERE project_id = '", prj_id, "'")
+    
+    dbExecute(mysqlconnection, query)
+    
+    # Display status
+    output$status2c.up <- renderText("Data Updated into Project Table.")
+    # Display updated table
+    output$tableOutput_Nprj <- renderTable({
+      # Retrieve and display data
+      query_select <- "SELECT * FROM project"
+      dbGetQuery(mysqlconnection, query_select)
+    })
+  })
+  # Remove All for a project
+  observeEvent(input$rmPrjAssign, {
+    # Get input values
+    project_id <- input$prj_id.rm
+    
+    # Delete from SQL project table
+    query1 <- paste0("DELETE FROM project WHERE project_id = '", project_id, "'")
+    dbExecute(mysqlconnection, query1)
+    
+    # Delete from SQL assigned project table
+    query2 <- paste0("DELETE FROM work_on WHERE project_id = '", project_id, "'")
+    dbExecute(mysqlconnection, query2)
+    
+    # Delete from SQL progress project table
+    query3 <- paste0("DELETE FROM project_progress WHERE project_id = '", project_id, "'")
+    dbExecute(mysqlconnection, query3)
+    
+    # Delete from SQL output project table
+    query3 <- paste0("DELETE FROM output WHERE project_id = '", project_id, "'")
+    dbExecute(mysqlconnection, query3)
+    
+    # Display status
+    output$status2e.rm <- renderText("The project is removed from ALL tables.")
+    output$tableOutput_Rmprj <-  renderTable({
+      # Retrieve and display data
+      query_select <- "SELECT * FROM project"
+      dbGetQuery(mysqlconnection, query_select)
+    })
+  })
 }
 
-#############################################################################
-# ShinyApp function creates Shiny app objects from an explicit UI/server pair
-#############################################################################
-shinyApp(ui, server)
 
 
-
-
-
-
-
-
-
-
-
-
-
+shinyApp(ui = ui, server = server)
