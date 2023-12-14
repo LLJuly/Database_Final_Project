@@ -14,6 +14,32 @@ mysqlconnection <- dbConnect(RMySQL::MySQL(),
                              user = 'root',
                              password = '951611028D@ryaSH')
 
+# get all the tables needed using SQL
+all_tables <- dbGetQuery(mysqlconnection,"show tables")
+#user here will either input the project id or the project name
+table_project_progress <- dbGetQuery(mysqlconnection, "SELECT title,project_id,status,date FROM project INNER JOIN project_progress  USING (project_id)")
+table_project_deadline <- dbGetQuery(mysqlconnection, "SELECT title,deadline,project_id FROM project")
+
+#user will input the department or the school and can see the client information
+table_department <- dbGetQuery(mysqlconnection, "select c.name, c.role, c.school,c.department, p.title,p.project_id from project p INNER join client c using (project_id)")
+
+
+#user will input the v number
+table_students <- dbGetQuery(mysqlconnection, "select sf.v_number, sf.name, sf.email, sf.title, vp.project_id
+                                           from student_faculty as sf
+                                           left join
+                                                (select wo.v_number, wo.project_id from work_on as wo
+                                                 union
+                                                 select wo.supervisor1_id, wo.project_id from work_on as wo
+                                                 union
+                                                 select wo.supervisor2_id, wo.project_id from work_on as wo) as vp
+                                           on sf.v_number = vp.v_number
+                                           order by vp.project_id")
+table_student_project <- dbGetQuery(mysqlconnection, "
+                                    select p.project_id,p.deadline, p.title,wo.supervisor1_id,wo.v_number,wo.supervisor2_id from project as p inner join work_on as wo using(project_id)")
+
+table_student_status <- dbGetQuery(mysqlconnection,
+                                  "select p.project_id, p.date,p.status, wo.v_number from project_progress p inner join work_on wo using(project_id) " )
 user_base <- tibble::tibble(
   user = c("Darya", "Jasmine","Li"),
   password = sapply(c("123", "123","123"), sodium::password_store),
@@ -57,13 +83,75 @@ server <- function(input, output, session) {
     navbarPage(
       "", 
       
-      navbarMenu("Observe Data", 
+      navbarMenu("Overview", 
                  tabPanel("All Projects",
                           DT::dataTableOutput("tableObs_prj")),
                  tabPanel("Client Information",
                           DT::dataTableOutput("tableObs_pi")),
                  tabPanel("Students and Faculties Information",
                           DT::dataTableOutput("tableObs_stu"))
+                 ),
+                 navbarMenu("Retrieve Information",
+                            tabPanel("Project section", br(),
+                                     sidebarLayout(
+                                       
+                                       sidebarPanel(
+                                         textInput("input_project_number",label = h4("Input the project number")),
+                                       ),
+                                       
+                                       mainPanel(
+                                         textOutput("output_text"),
+                                         br(),
+                                         div("Deadline of this project is ", style = "color:red"),
+                                         textOutput("output_project_deadline"),
+                                         h4("Project Progress"),
+                                         dataTableOutput("output_project_progress"),
+                                         br(),
+
+                                         br(),
+                                         h4("BCL members working on this project"),
+                                         dataTableOutput("output_selected_bcl")
+                                       )
+                                       
+                                     )),
+                            tabPanel("Client section", br(),
+                                     sidebarLayout(
+                                       
+                                       sidebarPanel(
+                                         selectInput("input_department", " Select the Department to view their projects  ",
+                                                     choices = dbGetQuery(mysqlconnection, "SELECT department FROM client")),
+                                         selectInput("input_school", " Select the VCU school to view their projects  ",
+                                                     choices = dbGetQuery(mysqlconnection, "SELECT school FROM client")),
+                                       ),
+                                       
+                                       mainPanel(
+                                         h4("Projects of this department are: "),
+                                         dataTableOutput("output_selected_department"),
+                                         br(),
+                                         h4("Projects of this school are: "),
+                                         dataTableOutput("output_selected_school"),
+                                         br(),
+                                       )
+                                       
+                                     )),
+                            tabPanel("Student section", br(),
+                                     sidebarLayout(
+                                       
+                                       sidebarPanel(
+                                         textInput("input_vnumber",label = h4("Input V number: "))
+                                       ),
+                                       
+                                       mainPanel(
+                                         h4("Your projects and deadlines: "),
+                                         dataTableOutput("output_selected_projects"),
+                                         br(),
+                                         h4("Status of the projects assigned to you:"),
+                                         dataTableOutput("output_project_status"),
+                                         br(),
+                                       )
+                                       
+                                     ))
+                            
                  ),
       navbarMenu("Edit table", 
                  tabPanel("Insert New Project", sidebarLayout(
@@ -118,6 +206,15 @@ server <- function(input, output, session) {
       )
     )
   })
+  # output of page observe-basic information
+  output$output_text               <- renderText({paste("You are checking information of project ", input$input_project_number)})
+  output$output_project_progress   <- renderDataTable({table_project_progress[table_project_progress$project_id   == input$input_project_number,]})
+  output$output_project_deadline   <- renderText({paste(table_project_deadline[table_project_deadline$project_id == input$input_project_number,]$deadline)})
+  output$output_selected_bcl         <- renderDataTable({table_students[table_students$project_id == input$input_project_number, ]})
+  output$output_selected_department    <- renderDataTable({table_department[table_department$department == input$input_department,]})
+  output$output_selected_school    <- renderDataTable({table_department[table_department$school == input$input_school,]})
+  output$output_selected_projects    <- renderDataTable({table_student_project[table_student_project$v_number == input$input_vnumber,]})
+  output$output_project_status    <- renderDataTable({table_student_status[table_student_status$v_number == input$input_vnumber,]})
   
     # Output of Observed table of Student and Faculty
   output$tableObs_stu <- DT::renderDataTable({
